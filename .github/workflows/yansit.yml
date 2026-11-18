@@ -1,0 +1,70 @@
+name: Yeni surumu al
+
+# Ana sunucudaki imzali surum bilgisine bakar; daha yeni bir surum varsa imzasini bu depodaki acik anahtarla dogrular,
+# dosyalari indirip parmak izlerini karsilastirir ve bu depoda surum (Release) olarak yayinlar. Gizli anahtar gerekmez.
+on:
+  schedule:
+    - cron: "*/20 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: yansit
+  cancel-in-progress: false
+
+jobs:
+  yansit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Yeni surum var mi
+        id: bak
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          A=https://altyazi.gokh4n.dev/indir
+          UA="ps5-subtitles"
+          mkdir -p y && cd y
+          curl -fsS -A "$UA" -o surum.json "$A/surum.json"
+          curl -fsS -A "$UA" -o surum.json.imza "$A/surum.json.imza"
+          base64 -d surum.json.imza > imza.bin
+          openssl dgst -sha256 -verify ../guncelleme-acik.pem -signature imza.bin surum.json
+          SURUM=$(python3 -c "import json; print(json.load(open('surum.json'))['surum'])")
+          [[ "$SURUM" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "gecersiz surum: $SURUM"; exit 1; }
+          if gh release view "v$SURUM" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "v$SURUM zaten var"; echo "yeni=0" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          SON=$(gh release list -R "$GITHUB_REPOSITORY" --exclude-drafts --limit 1 --json tagName -q '.[0].tagName' || true)
+          if [ -n "$SON" ] && python3 -c "import sys; a=tuple(map(int,'$SURUM'.split('.'))); b=tuple(map(int,'${SON#v}'.split('.'))); sys.exit(0 if a<=b else 1)"; then
+            echo "sunucudaki $SURUM, buradaki $SON'dan yeni degil"; echo "yeni=0" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "surum=$SURUM" >> "$GITHUB_OUTPUT"; echo "yeni=1" >> "$GITHUB_OUTPUT"
+      - name: Dosyalari indir ve dogrula
+        if: steps.bak.outputs.yeni == '1'
+        working-directory: y
+        run: |
+          set -euo pipefail
+          A=https://altyazi.gokh4n.dev/indir
+          for f in Altyazi-Kurulum.exe altyazi-tv.apk; do curl -fsS -A "ps5-subtitles" -o "$f" "$A/$f"; done
+          python3 - <<'PY'
+          import hashlib, json, os, sys
+          m = json.load(open("surum.json"))
+          for k, ad in (("exe", "Altyazi-Kurulum.exe"), ("apk", "altyazi-tv.apk")):
+              v = open(ad, "rb").read()
+              if len(v) != m[k]["boyut"] or hashlib.sha256(v).hexdigest() != m[k]["sha256"]:
+                  sys.exit(f"{ad} surum bilgisiyle uyusmuyor")
+          print("dosyalar dogrulandi")
+          PY
+      - name: Yayinla
+        if: steps.bak.outputs.yeni == '1'
+        working-directory: y
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SURUM: ${{ steps.bak.outputs.surum }}
+        run: |
+          gh release create "v$SURUM" Altyazi-Kurulum.exe altyazi-tv.apk surum.json surum.json.imza \
+            -R "$GITHUB_REPOSITORY" --latest --title "$SURUM" \
+            --notes "Kurulum ve kullanım: https://gokh4n.dev/altyazi"

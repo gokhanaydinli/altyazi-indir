@@ -14,3 +14,6 @@ Program yalnız imzası doğru olan güncellemeyi kurar; indirilen dosyanın par
 karşılaştırılır.
 
 Bu program Sony Interactive Entertainment ya da oyun yayıncılarıyla bağlantılı değildir.
+
+Sürümler, ana sunucudaki imzalı sürüm bilgisinden otomatik alınır (`.github/workflows/yansit.yml`): imza bu depodaki
+açık anahtarla (`guncelleme-acik.pem`) doğrulanır, dosyaların parmak izi karşılaştırılır; tutmazsa yayınlanmaz.
